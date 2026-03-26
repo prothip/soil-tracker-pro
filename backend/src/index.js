@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 const PORT = 3002;
@@ -33,14 +34,13 @@ app.get('/api/version', (req, res) => {
   res.json({ version: APP_VERSION });
 });
 
-// Serve built frontend in production
-const path = require('path');
-app.use(express.static(path.join(__dirname, '../../frontend/dist')));
-
-// Serve license generator page
+// Serve license generator page (BEFORE static middleware)
 app.get('/generator', (req, res) => {
   res.sendFile(path.join(__dirname, '../../public/generator.html'));
 });
+
+// Serve built frontend in production
+app.use(express.static(path.join(__dirname, '../../frontend/dist')));
 
 // Catch-all: serve index.html for SPA routes
 app.get('*', (req, res) => {
