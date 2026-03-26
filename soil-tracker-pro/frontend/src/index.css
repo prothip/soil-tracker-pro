@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --c-primary: #2563EB;
+  --c-accent: #D97706;
+  --c-bg: #F1F5F9;
+  --c-surface: #FFFFFF;
+  --c-text: #0F172A;
+  --c-muted: #64748B;
+  --c-border: #CBD5E1;
+  --c-success: #16A34A;
+  --c-warning: #D97706;
+  --c-danger: #DC2626;
+}
+
+.dark {
+  --c-primary: #3B82F6;
+  --c-accent: #F59E0B;
+  --c-bg: #0F172A;
+  --c-surface: #1E293B;
+  --c-text: #F1F5F9;
+  --c-muted: #94A3B8;
+  --c-border: #334155;
+  --c-success: #22C55E;
+  --c-warning: #F59E0B;
+  --c-danger: #EF4444;
+}
+
+* { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+body { background-color: var(--c-bg); min-height: 100dvh; font-family: 'Inter', system-ui, sans-serif; color: var(--c-text); }
+input, select, textarea { font-family: inherit; color: inherit; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 999px; }
+
+/* DatePicker dark tweaks */
+.dark .bg-surface { background-color: var(--c-surface); }
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-up { animation: slide-up 0.2s ease-out; }

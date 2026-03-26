@@ -2,10 +2,11 @@ import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 
 import {
   LayoutDashboard, ClipboardList, Truck, MoreHorizontal,
   LogOut, Plus, Search, ChevronDown, Pencil, Trash2,
-  Download, X, Check, AlertCircle, Package, Sun, Moon, RefreshCw, CalendarDays, Key, Shield
+  Download, X, Check, AlertCircle, Sun, Moon, RefreshCw, CalendarDays,
+  Copy, Ban, Wifi, WifiOff, Upload
 } from 'lucide-react'
 import DatePicker from './components/DatePicker'
-import { api } from './lib/api'
+import { api, STP_API } from './lib/api-customer'
 import { VERSION } from './version'
 const QrScanner = lazy(() => import('./components/QrScanner'))
 const TruckQrModal = lazy(() => import('./components/TruckQrModal'))
@@ -26,7 +27,73 @@ function buildExportUrl(path, params) {
     Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '' && v !== 'undefined')
   )
   if (token) clean.token = token
-  return `/api/export/${path}?${new URLSearchParams(clean).toString()}`
+  return `${STP_API}/api/export/${path}?${new URLSearchParams(clean).toString()}`
+}
+
+// ─── Activation Screen ─────────────────────────────────────────────────────────
+function ActivationScreen({ onSuccess }) {
+  const [code, setCode] = useState('')
+  const [err, setErr] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  function format(v) {
+    const c = v.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 16)
+    const parts = []
+    for (let i = 0; i < c.length; i += 4) parts.push(c.slice(i, i + 4))
+    return parts.join('-')
+  }
+
+  async function handle(e) {
+    e.preventDefault()
+    if (code.replace(/-/g, '').length < 16) { setErr('Please enter a complete activation code'); return }
+    setErr(''); setLoading(true)
+    try {
+      const res = await fetch(`${STP_API}/api/auth/device-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code })
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      localStorage.setItem('stp_token', data.token)
+      localStorage.setItem('stp_code', code)
+      onSuccess(data.token)
+    } catch (e) {
+      setErr(e.message || 'Activation failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-bg flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="text-3xl font-bold text-text tracking-tight">Soil Tracker <span className="text-accent">Pro</span></div>
+          <p className="text-muted text-sm mt-1">Enter your activation code to continue</p>
+        </div>
+        <form onSubmit={handle} className="bg-surface rounded-2xl shadow-sm border border-border p-6 space-y-4">
+          {err && <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded-lg flex items-center gap-2">
+            <AlertCircle size={16} /><span>{err}</span>
+          </div>}
+          <div>
+            <label className="text-sm font-medium text-text block mb-1.5">Activation Code</label>
+            <input
+              value={code} onChange={e => { setCode(format(e.target.value)); setErr('') }}
+              placeholder="XXXX-XXXX-XXXX-XXXX"
+              className="w-full h-12 px-3 rounded-xl border border-border bg-surface text-center text-lg font-mono tracking-widest placeholder-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/30 uppercase"
+              autoComplete="off" autoCapitalize="characters"
+            />
+          </div>
+          <button type="submit" disabled={loading}
+            className="w-full h-11 bg-primary text-white font-semibold rounded-lg hover:bg-primary/90 active:scale-[0.98] transition-all disabled:opacity-50">
+            {loading ? 'Activating...' : 'Activate'}
+          </button>
+          <p className="text-xs text-muted text-center">Contact your administrator for an activation code</p>
+        </form>
+      </div>
+    </div>
+  )
 }
 
 // ─── Auth ───────────────────────────────────────────────────────────────────
@@ -35,22 +102,86 @@ function LoginPage({ onLogin }) {
   const [p, setP] = useState('')
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showForgot, setShowForgot] = useState(false)
+  const [forgotCode, setForgotCode] = useState('')
+  const [forgotStep, setForgotStep] = useState(1) // 1=enter code, 2=enter new password
+  const [newPass, setNewPass] = useState('')
+  const [newUser, setNewUser] = useState('')
+  const [forgotMsg, setForgotMsg] = useState('')
 
   async function handle(e) {
     e.preventDefault()
+    if (!u.trim()) { setErr('Please enter username'); return }
+    if (!p) { setErr('Please enter password'); return }
     setErr('')
     setLoading(true)
     try {
-      const data = await api.auth.login(u, p)
-      if (!data || !data.token) throw new Error('No token received from server')
+      const res = await fetch(`${STP_API}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: u, password: p })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Login failed — check credentials')
       localStorage.setItem('stp_token', data.token)
       localStorage.setItem('stp_user', JSON.stringify(data.user))
-      window.location.hash = '#dashboard'
-      window.location.reload()
-    } catch (err) {
-      setErr(err.message || 'Login failed — check credentials')
+      onLogin(data.user)
+    } catch (e) {
+      setErr(e.message || 'Login failed — check credentials')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleForgotSubmit() {
+    if (forgotStep === 1) {
+      // Verify activation code
+      if (!forgotCode || forgotCode.replace(/-/g,'').length < 16) {
+        setForgotMsg('Enter a valid activation code')
+        return
+      }
+      setForgotMsg('Verifying...')
+      try {
+        const res = await fetch(`${STP_API}/api/auth/verify-code`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: forgotCode })
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || !data.valid) throw new Error('Invalid activation code')
+        setForgotStep(2)
+        setForgotMsg('Code verified! Now set your new username and password.')
+      } catch (e) {
+        setForgotMsg(e.message || 'Invalid activation code')
+      }
+    } else {
+      // Reset password with code
+      if (!newUser.trim() || !newPass) {
+        setForgotMsg('Enter new username and password')
+        return
+      }
+      if (newPass.length < 4) {
+        setForgotMsg('Password must be at least 4 characters')
+        return
+      }
+      setForgotMsg('Resetting...')
+      try {
+        const res = await fetch(`${STP_API}/api/auth/reset-with-code`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: forgotCode, username: newUser, password: newPass })
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data.error || 'Reset failed')
+        setForgotMsg('Password reset! You can now login.')
+        setShowForgot(false)
+        setForgotStep(1)
+        setForgotCode('')
+        setNewUser('')
+        setNewPass('')
+      } catch (e) {
+        setForgotMsg(e.message || 'Reset failed')
+      }
     }
   }
 
@@ -76,7 +207,57 @@ function LoginPage({ onLogin }) {
           <button type="submit" disabled={loading} className="w-full h-11 bg-primary text-white font-semibold rounded-lg hover:bg-primary/90 active:scale-[0.98] transition-all disabled:opacity-50">
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
+          {!showForgot ? (
+            <button type="button" onClick={() => setShowForgot(true)} className="text-xs text-primary hover:underline text-center">
+              Forgot password?
+            </button>
+          ) : (
+            <div className="border border-border rounded-lg p-3 space-y-2">
+              <p className="text-xs font-semibold text-text">Reset Password</p>
+              <p className="text-xs text-muted">Use your <b>activation code</b> to reset credentials. Your activation code is printed on your license document.</p>
+              {forgotStep === 1 ? (
+                <>
+                  <input value={forgotCode} onChange={e => setForgotCode(e.target.value.toUpperCase())} maxLength={20}
+                    className="w-full h-10 px-3 rounded-lg border border-border bg-surface text-sm uppercase tracking-wider"
+                    placeholder="XXXX-XXXX-XXXX-XXXX" />
+                  {forgotMsg && <p className={`text-xs ${forgotMsg.includes('verified')||forgotMsg.includes('reset') ? 'text-success' : 'text-danger'}`}>{forgotMsg}</p>}
+                  <button type="button" onClick={handleForgotSubmit}
+                    className="w-full h-9 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90">
+                    Verify Code
+                  </button>
+                </>
+              ) : (
+                <>
+                  <input value={newUser} onChange={e => setNewUser(e.target.value)}
+                    className="w-full h-10 px-3 rounded-lg border border-border bg-surface text-sm" placeholder="New username" />
+                  <input type="password" value={newPass} onChange={e => setNewPass(e.target.value)}
+                    className="w-full h-10 px-3 rounded-lg border border-border bg-surface text-sm" placeholder="New password (min 4 chars)" />
+                  {forgotMsg && <p className="text-xs text-danger">{forgotMsg}</p>}
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => { setShowForgot(false); setForgotStep(1); setForgotCode(''); setForgotMsg('') }}
+                      className="flex-1 h-9 border border-border text-muted text-sm rounded-lg">Cancel</button>
+                    <button type="button" onClick={handleForgotSubmit}
+                      className="flex-1 h-9 bg-success text-white text-sm font-medium rounded-lg hover:bg-success/90">Reset</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <p className="text-xs text-muted text-center">Default: admin / admin123</p>
+          <div className="border-t border-border pt-3 mt-2">
+            <p className="text-xs text-muted text-center mb-2">Starting fresh on this device?</p>
+            <button type="button" onClick={async () => {
+              if (!confirm('This will delete ALL data (deliveries, trucks, sites) on this server. Are you sure?')) return
+              try {
+                const token = localStorage.getItem('stp_token')
+                await fetch(`${STP_API}/api/reset`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ confirm: 'RESET' }) })
+                localStorage.removeItem('stp_token'); localStorage.removeItem('stp_user'); localStorage.removeItem('stp_code'); localStorage.removeItem('stp_site_id')
+                window.location.reload()
+              } catch { alert('Reset failed') }
+            }} className="w-full h-9 border border-danger/30 text-danger text-sm font-medium rounded-lg hover:bg-danger/5 transition-all">
+              Start Fresh — Clear All Data
+            </button>
+          </div>
         </form>
       </div>
     </div>
@@ -111,23 +292,6 @@ function useToast() {
   return { toasts, show }
 }
 
-class ErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { hasError: false, msg: '' } }
-  static getDerivedStateFromError(e) { return { hasError: true, msg: e.message } }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="p-6 text-center">
-          <p className="text-danger font-semibold mb-2">Something went wrong</p>
-          <p className="text-muted text-xs mb-4">{this.state.msg}</p>
-          <button onClick={() => this.setState({ hasError: false })} className="text-primary text-sm font-medium">Try again</button>
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
-
 // ─── Site Selector ──────────────────────────────────────────────────────────
 function SiteSelector({ sites, siteId, onChange }) {
   const [open, setOpen] = useState(false)
@@ -158,22 +322,20 @@ function SiteSelector({ sites, siteId, onChange }) {
 }
 
 // ─── Topbar ─────────────────────────────────────────────────────────────────
-function Topbar({ sites, siteId, onSiteChange, user, onLogout, isOffline, dark, onToggleDark }) {
+function Topbar({ user, onLogout, dark, onToggleDark, online }) {
   return (
     <header className="bg-surface border-b border-border px-4 py-3 sticky top-0 z-40 flex items-center justify-between gap-3">
       <div className="text-base font-bold text-text tracking-tight">Soil Tracker <span className="text-accent">Pro</span></div>
       <div className="flex items-center gap-2">
-        {isOffline && <span className="text-xs bg-warning/10 text-warning px-2 py-0.5 rounded-full font-medium">Offline</span>}
+        {online === false && <span className="text-xs text-red-400 flex items-center gap-1"><WifiOff size={12} /> Offline</span>}
+        {online === true && <span className="text-xs text-emerald-400 flex items-center gap-1"><Wifi size={12} /></span>}
         <button onClick={onToggleDark} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-border transition-colors">
-          {dark ? <Sun size={16} className="text-accent" /> : <Moon size={16} className="text-muted" />}
+          {dark ? <Moon size={16} className="text-accent" /> : <Sun size={16} className="text-muted" />}
         </button>
-        <SiteSelector sites={sites} siteId={siteId} onChange={onSiteChange} />
-        <div className="flex items-center gap-1.5">
-          <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
-            <span className="text-xs font-semibold text-primary">{user?.username?.[0]?.toUpperCase()}</span>
-          </div>
-          <button onClick={onLogout} className="text-muted hover:text-danger transition-colors"><LogOut size={18} /></button>
+        <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
+          <span className="text-xs font-semibold text-primary">{user?.username?.[0]?.toUpperCase()}</span>
         </div>
+        <button onClick={onLogout} className="text-muted hover:text-danger transition-colors"><LogOut size={18} /></button>
       </div>
     </header>
   )
@@ -246,7 +408,7 @@ function DeliveryForm({ sites, siteId, trucks, materials, onSubmit, loading, ini
 
   useEffect(() => { if (siteId && !initial) setSite(siteId) }, [siteId])
 
-  // Auto-fetch next lot when truck or date changes (only for new deliveries, not edits)
+  // Auto-fetch next lot when truck changes
   useEffect(() => {
     if (!initial?.lot_number && truck) {
       const effectiveDate = initial?.date || new Date().toLocaleDateString('en-CA')
@@ -269,7 +431,7 @@ function DeliveryForm({ sites, siteId, trucks, materials, onSubmit, loading, ini
     return e
   }
 
-  async function handleSubmit(ev) {
+  async function handleSubmitForm(ev) {
     ev.preventDefault()
     const e = validate()
     if (Object.keys(e).length) { setErr(e); return }
@@ -298,7 +460,7 @@ function DeliveryForm({ sites, siteId, trucks, materials, onSubmit, loading, ini
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3">
+    <form onSubmit={handleSubmitForm} className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-xs font-medium text-muted block mb-1">Site</label>
@@ -392,144 +554,110 @@ function DeliveryForm({ sites, siteId, trucks, materials, onSubmit, loading, ini
   )
 }
 
-// ─── Dashboard ───────────────────────────────────────────────────────────────
-function DashboardPage({ siteId, showToast }) {
-  const defaultDate = new Date().toLocaleDateString('en-CA')
-  const [selectedDate, setSelectedDate] = useState(defaultDate)
-  const [daily, setDaily] = useState(null)
-  const [yesterday, setYesterday] = useState(null)
-  const [weekRange, setWeekRange] = useState(null)
+// ─── Dashboard Page ─────────────────────────────────────────────────────────────
+function DashboardPage({ siteId, sites, trucks, onChangeSite }) {
+  const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
+  const { show: showToast } = useToast()
+
+  const today = new Date().toLocaleDateString('en-CA')
+  const weekStart = (() => { const d = new Date(); d.setDate(d.getDate() - 6); return d.toLocaleDateString('en-CA') })()
 
   useEffect(() => {
-    if (siteId == null || siteId === 0) return
+    if (!siteId) { setLoading(false); return }
     setLoading(true)
-    const yd = (d => { d.setDate(d.getDate() - 1); return d.toLocaleDateString('en-CA') })(new Date(selectedDate + 'T12:00:00'))
-    const ws = (d => { d.setDate(d.getDate() - 6); return d.toLocaleDateString('en-CA') })(new Date(selectedDate + 'T12:00:00'))
     Promise.all([
-      api.stats.daily(siteId, selectedDate),
-      api.stats.daily(siteId, yd),
-      api.stats.range(siteId, ws, selectedDate),
-    ]).then(([d, y, w]) => { setDaily(d); setYesterday(y); setWeekRange(w) })
-      .catch(() => showToast('Failed to load stats', 'error'))
-      .finally(() => setLoading(false))
-  }, [siteId, selectedDate])
+      api.stats.daily(siteId, today),
+      api.stats.count(),
+      api.stats.alltime(),
+      api.stats.range(siteId, weekStart, today),
+    ]).then(([d, count, allTime, week]) => {
+      setStats({ ...d, grand_lots: count.count, grand_tons: allTime.total_tons || 0, weekStats: week.daily || [] })
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [siteId])
 
-  if (!siteId) return <div className="p-4 text-center text-muted text-sm mt-8">Select a site to view dashboard</div>
-  if (loading) return <div className="p-4 text-center text-muted text-sm mt-8">Loading stats...</div>
-
-  const maxTons = weekRange?.daily?.length ? Math.max(...weekRange.daily.map(d => d.tons), 1) : 1
-  const todayTons = daily?.stats?.total_tons ?? 0
-  const yestTons = yesterday?.stats?.total_tons ?? 0
-  const pctChange = yestTons > 0 ? (((todayTons - yestTons) / yestTons) * 100).toFixed(1) : null
-  const isToday = selectedDate === defaultDate
+  const todayDeliveries = stats?.stats?.total_lots || 0
+  const todayTons = stats?.stats?.total_tons || 0
+  const totalDeliveries = stats?.grand_lots || 0
+  const totalTons = stats?.grand_tons || 0
+  const activeTrucks = trucks.filter(t => t.status === 'active').length
 
   return (
-    <div className="p-4 space-y-4 pb-6">
+    <div className="p-4 space-y-4">
       <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-text">Dashboard</h2>
+        <button onClick={() => window.location.reload()} className="text-muted hover:text-text">
+          <RefreshCw size={16} />
+        </button>
+      </div>
+
+      {/* Site selector */}
+      {sites.length > 0 && (
         <div className="flex items-center gap-2">
-          <CalendarDays size={16} className="text-muted" />
-          <DatePicker value={selectedDate} onChange={setSelectedDate} />
-          {!isToday && (
-            <button onClick={() => setSelectedDate(defaultDate)} className="text-xs text-primary font-medium hover:underline ml-1">
-              Today
-            </button>
-          )}
-        </div>
-        {!isToday && <span className="text-xs text-muted">Viewing: {selectedDate}</span>}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <SummaryCard label={isToday ? "Today's Lots" : `${selectedDate} Lots`} value={daily?.stats?.total_lots} />
-        <SummaryCard label={isToday ? "Today's Trucks" : `${selectedDate} Trucks`} value={daily?.stats?.unique_trucks} />
-        <SummaryCard label={isToday ? "Today's Tonnage" : `${selectedDate} Tons`} value={daily?.stats?.total_tons?.toFixed(1)} sub="tons" color="text-primary" />
-        <SummaryCard label="Week Tonnage" value={weekRange?.grand?.total_tons?.toFixed(1)} sub="tons" color="text-accent" />
-      </div>
-
-      {pctChange !== null && (
-        <div className="flex items-center gap-3 bg-surface rounded-xl border border-border px-4 py-2.5">
-          <span className="text-xs text-muted">vs previous day</span>
-          <div className="flex items-center gap-1.5">
-            <span className="text-sm font-semibold text-text">{todayTons.toFixed(1)}t</span>
-            <span className="text-xs text-muted">vs {yestTons.toFixed(1)}t</span>
-            <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${Number(pctChange) >= 0 ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
-              {Number(pctChange) >= 0 ? '↑' : '↓'} {Math.abs(Number(pctChange))}%
-            </span>
-          </div>
+          <span className="text-xs text-muted">Viewing:</span>
+          <SiteSelector sites={sites} siteId={siteId} onChange={onChangeSite} />
         </div>
       )}
 
-      <div className="bg-surface rounded-xl border border-border p-4">
-        <h3 className="text-sm font-semibold text-text mb-3">Tonnage — Last 7 Days</h3>
-        {weekRange?.daily?.length > 0 ? (
-          <div className="grid grid-cols-7 gap-1.5 h-28 items-end">
-            {weekRange.daily.map(d => {
-              const h = d.tons > 0 ? Math.max(8, (d.tons / maxTons) * 96) : 4
-              const dayLabel = new Date(d.date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short' })
-              return (
-                <div key={d.date} className="flex flex-col items-center gap-1 min-w-0">
-                  <div className="w-full bg-primary rounded-sm" style={{ height: `${h}px`, minHeight: '4px' }} />
-                  <span className="text-xs text-muted whitespace-nowrap">{dayLabel}</span>
-                  <span className="text-xs font-medium text-text whitespace-nowrap">{d.tons.toFixed(0)}t</span>
-                </div>
-              )
-            })}
-          </div>
-        ) : <p className="text-sm text-muted text-center py-6">No data this week</p>}
-      </div>
-
-      <div className="bg-surface rounded-xl border border-border overflow-hidden">
-        <div className="px-4 py-3 border-b border-border">
-          <h3 className="text-sm font-semibold text-text">Top Trucks — Last 7 Days</h3>
+      {!siteId ? (
+        <div className="bg-surface rounded-xl border border-border p-8 text-center">
+          <div className="text-3xl mb-2">📍</div>
+          <p className="text-muted text-sm">Select a site to view dashboard</p>
+          <p className="text-xs text-muted/60 mt-1">Go to More → Sites to add a site first</p>
         </div>
-        {weekRange?.byTruck?.length > 0 ? (
-          <div className="divide-y divide-border">
-            {weekRange.byTruck.slice(0, 5).map((t, i) => (
-              <div key={t.plate_number} className="flex items-center justify-between px-4 py-2.5">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-muted w-4">{i + 1}</span>
-                  <div>
-                    <div className="text-sm font-medium text-text">{t.plate_number}</div>
-                    <div className="text-xs text-muted">{t.driver_name || 'No driver'}</div>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm font-semibold text-text">{t.tons.toFixed(1)}t</div>
-                  <div className="text-xs text-muted">{t.lots} lots</div>
+      ) : (
+        <>
+          <div className="bg-surface rounded-xl border border-border p-4">
+            <div className="text-xs text-muted mb-1">Today</div>
+            <div className="text-xs text-muted">{new Date().toLocaleDateString('en-CA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <SummaryCard label="Today's Deliveries" value={loading ? '—' : todayDeliveries} sub="lots logged" />
+            <SummaryCard label="Today's Tons" value={loading ? '—' : todayTons.toFixed(1)} sub={`${todayTons > 0 ? '+' : ''}${todayTons.toFixed(1)}t`} color="text-primary" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <SummaryCard label="All Time — Lots" value={totalDeliveries} sub="total deliveries" color="text-text" />
+            <SummaryCard label="All Time — Tons" value={totalTons.toFixed(1)} sub="tonnes logged" color="text-accent" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <SummaryCard label="Active Trucks" value={activeTrucks} sub="registered" color="text-success" />
+            <SummaryCard label="Sites" value={sites.length} sub="total" color="text-muted" />
+          </div>
+
+          {/* Weekly chart */}
+          {stats?.weekStats?.length > 0 && (() => {
+            const maxTons = Math.max(...stats.weekStats.map(d => d.tons), 1)
+            return (
+              <div className="bg-surface rounded-xl border border-border p-4">
+                <h3 className="text-sm font-semibold text-text mb-3">Last 7 Days</h3>
+                <div className="grid grid-cols-7 gap-1.5 h-28 items-end">
+                  {stats.weekStats.map(d => {
+                    const h = d.tons > 0 ? Math.max(8, d.tons / maxTons * 96) : 4
+                    const dayLabel = new Date(d.date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short' })
+                    return (
+                      <div key={d.date} className="flex flex-col items-center gap-1 min-w-0">
+                        <div className="w-full bg-primary rounded-sm" style={{ height: `${h}px`, minHeight: '4px' }} />
+                        <span className="text-xs text-muted whitespace-nowrap">{dayLabel}</span>
+                        <span className="text-xs font-medium text-text whitespace-nowrap">{d.tons.toFixed(0)}t</span>
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
-            ))}
-          </div>
-        ) : <p className="p-4 text-sm text-muted text-center">No truck data this week</p>}
-      </div>
-
-      <div className="bg-surface rounded-xl border border-border overflow-hidden">
-        <div className="px-4 py-3 border-b border-border">
-          <h3 className="text-sm font-semibold text-text">Recent Deliveries</h3>
-        </div>
-        {daily?.recent?.length > 0 ? (
-          <div className="divide-y divide-border">
-            {daily.recent.map(d => (
-              <div key={d.id} className="flex items-center justify-between px-4 py-2.5">
-                <div>
-                  <div className="text-sm font-medium text-text">{d.lot_number}</div>
-                  <div className="text-xs text-muted">{d.plate_number} · {d.material_name || '—'}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-sm font-semibold text-text">{d.weight_tons}t</div>
-                  <div className="text-xs text-muted">{d.delivered_at ? d.delivered_at.split('T')[1].slice(0,5) : ''}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : <p className="p-4 text-sm text-muted text-center">No recent deliveries</p>}
-      </div>
+            )
+          })()}
+        </>
+      )}
     </div>
   )
 }
 
 // ─── Log Page ────────────────────────────────────────────────────────────────
-function LogPage({ siteId, sites, trucks, materials, onRefresh, showForm, setShowForm, editing, setEditing, showQr, setShowQr }) {
+function LogPage({ siteId, sites, trucks, materials, onRefresh, showQr, setShowQr, onQrScan, scannedTruckId, onScannedTruckUsed }) {
   const [deliveries, setDeliveries] = useState([])
   const [total, setTotal] = useState(0)
   const [pages, setPages] = useState(1)
@@ -538,6 +666,8 @@ function LogPage({ siteId, sites, trucks, materials, onRefresh, showForm, setSho
   const [matFilter, setMatFilter] = useState('')
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [showForm, setShowForm] = useState(false)
+  const [editing, setEditing] = useState(null)
   const { show: showToast } = useToast()
   const requestRef = useRef(0)
 
@@ -568,7 +698,7 @@ function LogPage({ siteId, sites, trucks, materials, onRefresh, showForm, setSho
   async function handleSubmit(data) {
     setSubmitting(true)
     try {
-      if (editing) {
+      if (editing?.id) {
         await api.deliveries.update(editing.id, data)
         showToast('Delivery updated')
       } else {
@@ -598,6 +728,21 @@ function LogPage({ siteId, sites, trucks, materials, onRefresh, showForm, setSho
     }
   }
 
+  // Called when form is submitted or closed — notify parent scanned truck was used
+  function handleFormClose() {
+    if (scannedTruckId) onScannedTruckUsed()
+  }
+
+  // When scannedTruckId arrives (from QR scan), pre-fill form with that truck
+  useEffect(() => {
+    if (scannedTruckId) {
+      // Toggle form closed then open to force Modal remount (React only remounts on key change)
+      setShowForm(false)
+      setEditing({ truck_id: scannedTruckId })
+      setTimeout(() => setShowForm(true), 50)
+    }
+  }, [scannedTruckId])
+
   return (
     <div className="p-4 space-y-3 pb-6">
       <div className="flex items-center justify-between">
@@ -609,7 +754,7 @@ function LogPage({ siteId, sites, trucks, materials, onRefresh, showForm, setSho
           <button onClick={() => setShowQr(true)}
             className="h-10 px-3 bg-accent/10 text-accent text-sm font-semibold rounded-lg flex items-center gap-1.5 hover:bg-accent/20 active:scale-[0.98] transition-all">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-            Scan Truck QR
+            Scan
           </button>
           <button onClick={() => { setEditing(null); setShowForm(true) }}
             className="h-10 px-4 bg-primary text-white text-sm font-semibold rounded-lg flex items-center gap-1.5 hover:bg-primary/90 active:scale-[0.98] transition-all">
@@ -662,7 +807,7 @@ function LogPage({ siteId, sites, trucks, materials, onRefresh, showForm, setSho
                   <tr key={d.id} className="hover:bg-bg/50 transition-colors">
                     <td className="px-4 py-3 text-xs text-muted">
                       <div>{d.date}</div>
-                      <div>{d.delivered_at ? d.delivered_at.split('T')[1].slice(0,5) : ''}</div>
+                      <div>{d.delivered_at ? d.delivered_at.split('T')[1]?.slice(0,5) : ''}</div>
                     </td>
                     <td className="px-4 py-3">
                       <div className="text-sm font-medium text-text">{d.plate_number}</div>
@@ -708,7 +853,7 @@ function LogPage({ siteId, sites, trucks, materials, onRefresh, showForm, setSho
 }
 
 // ─── Trucks Page ─────────────────────────────────────────────────────────────
-function TrucksPage({ trucks, materials, onRefresh, setShowQrModalFor }) {
+function TrucksPage({ trucks, onRefresh, setShowQrModalFor }) {
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState({ plate_number: '', driver_name: '', capacity_tons: '' })
@@ -897,7 +1042,7 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
   const restoreRef = useRef()
   const [siteForm, setSiteForm] = useState({ name: '', location: '' })
 
-  useEffect(() => { api.stats.count().then(r => setDeliveryCount(r.count)).catch(() => {}) }, [])
+  useEffect(() => { api.stats.count().then(r => setDeliveryCount(r.count || 0)).catch(() => {}) }, [])
 
   const today = new Date().toLocaleDateString('en-CA')
   const weekStart = (d => { d.setDate(d.getDate() - 6); return d.toLocaleDateString('en-CA') })(new Date())
@@ -975,7 +1120,7 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
     reader.onload = function(e) {
       const base64 = e.target.result.split(',')[1]
       const token = localStorage.getItem('stp_token')
-      fetch('/api/backup/restore', {
+      fetch(`${STP_API}/api/backup/restore`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ file: base64 }),
       }).then(res => { if (!res.ok) throw new Error('Restore failed'); return res.json() })
@@ -1004,7 +1149,7 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
       {/* Reports section */}
       <div className="bg-surface rounded-xl border border-border overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
-          <h3 className="text-sm font-semibold text-text">Reports & Export</h3>
+          <h3 className="text-sm font-semibold text-text">📊 Reports & Export</h3>
         </div>
         <div className="p-4 space-y-3">
           <div>
@@ -1046,12 +1191,20 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
               <h3 className="text-sm font-semibold text-text">
                 {sites.find(s => s.id == (repSite || siteId))?.name || 'Report'}: {repStart} → {repEnd}
               </h3>
-              <p className="text-xs text-muted">{reportData.byTruck?.length || 0} trucks · {reportData.grand?.total_lots || 0} lots · {reportData.grand?.total_tons?.toFixed(1) || 0}t total</p>
+              <p className="text-xs text-muted">{reportData.byTruck?.length || 0} trucks · {reportData.grand?.total_lots || 0} lots · {(reportData.grand?.total_tons || 0).toFixed(1)}t total</p>
             </div>
             <div className="flex gap-2">
               <button onClick={() => downloadUrl(buildExportUrl('html', { site_id: repSite || siteId, start: repStart, end: repEnd, material_id: repMat || undefined, site_name: sites.find(s => s.id == (repSite || siteId))?.name || '' }), `report-${repStart}-to-${repEnd}.html`)}
-                className="h-9 px-3 bg-danger text-white text-sm font-medium rounded-lg flex items-center gap-1.5 hover:bg-danger/90 active:scale-[0.98] transition-all">
+                className="h-9 px-3 bg-primary text-white text-sm font-medium rounded-lg flex items-center gap-1.5 hover:bg-primary/90 active:scale-[0.98] transition-all">
                 <Download size={14} /> Print
+              </button>
+              <button onClick={() => downloadUrl(buildExportUrl('pdf', { site_id: repSite || siteId, start: repStart, end: repEnd, material_id: repMat || undefined }), `report-${repStart}-to-${repEnd}.pdf`)}
+                className="h-9 px-3 bg-danger text-white text-sm font-medium rounded-lg flex items-center gap-1.5 hover:bg-danger/90 active:scale-[0.98] transition-all">
+                PDF
+              </button>
+              <button onClick={() => downloadUrl(buildExportUrl('excel', { site_id: repSite || siteId, start: repStart, end: repEnd, material_id: repMat || undefined }), `report-${repStart}-to-${repEnd}.xlsx`)}
+                className="h-9 px-3 bg-success text-white text-sm font-medium rounded-lg flex items-center gap-1.5 hover:bg-success/90 active:scale-[0.98] transition-all">
+                <Download size={14} /> Excel
               </button>
               <button onClick={() => setShowReport(false)} className="w-8 h-8 flex items-center justify-center rounded-lg text-muted hover:text-text">
                 <X size={16} />
@@ -1061,7 +1214,7 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
 
           <div className="grid grid-cols-3 divide-x divide-border border-b border-border">
             <div className="p-3 text-center"><div className="text-lg font-bold text-text">{reportData.grand?.total_lots ?? 0}</div><div className="text-xs text-muted">Total Lots</div></div>
-            <div className="p-3 text-center"><div className="text-lg font-bold text-primary">{reportData.grand?.total_tons?.toFixed(1) ?? '0.0'}</div><div className="text-xs text-muted">Total Tons</div></div>
+            <div className="p-3 text-center"><div className="text-lg font-bold text-primary">{(reportData.grand?.total_tons || 0).toFixed(1)}</div><div className="text-xs text-muted">Total Tons</div></div>
             <div className="p-3 text-center"><div className="text-lg font-bold text-accent">{reportData.byTruck?.length ?? 0}</div><div className="text-xs text-muted">Trucks</div></div>
           </div>
 
@@ -1141,7 +1294,7 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
       {/* Sites */}
       <div className="bg-surface rounded-xl border border-border overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-text">Sites</h3>
+          <h3 className="text-sm font-semibold text-text">📍 Sites</h3>
           <button onClick={() => { setEditingSite(null); setSiteForm({ name: '', location: '' }); setShowSiteForm(true) }}
             className="text-primary text-sm font-medium">+ Add</button>
         </div>
@@ -1180,7 +1333,7 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
       {/* Materials */}
       <div className="bg-surface rounded-xl border border-border overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-text">Materials</h3>
+          <h3 className="text-sm font-semibold text-text">🧱 Materials</h3>
           <button onClick={() => { setMatForm({ name: '' }); setShowMatForm(true) }}
             className="text-primary text-sm font-medium">+ Add</button>
         </div>
@@ -1195,7 +1348,7 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
         </div>
       </div>
 
-      {/* Settings — visible to all users */}
+      {/* Settings */}
       <div className="bg-surface rounded-xl border border-border overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
           <h3 className="text-sm font-semibold text-text">⚙️ Settings</h3>
@@ -1332,136 +1485,119 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
 export default function App() {
   const [user, setUser] = useState(() => { try { return JSON.parse(localStorage.getItem('stp_user')) } catch { return null } })
   const token = localStorage.getItem('stp_token')
+  const activated = localStorage.getItem('stp_code')
   const [tab, setTab] = useState('dashboard')
-  const [siteId, setSiteId] = useState(() => Number(localStorage.getItem('stp_site')) || null)
-  const [sites, setSites] = useState([])
-  const [trucks, setTrucks] = useState([])
-  const [materials, setMaterials] = useState([])
-  const [isOffline, setIsOffline] = useState(!navigator.onLine)
   const [dark, setDark] = useState(() => localStorage.getItem('stp_dark') === '1')
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [updateDismissed, setUpdateDismissed] = useState(false)
-  const [showQr, setShowQr] = useState(false)
-  const [showQrModalFor, setShowQrModalFor] = useState(null)
-
-  const [editing, setEditing] = useState(null)
-  const [showForm, setShowForm] = useState(false)
+  const [online, setOnline] = useState(navigator.onLine)
   const { toasts, show: showToast } = useToast()
 
-  function handleQrScan(plateNumber) {
-    const trimmed = plateNumber.trim().toUpperCase()
-    const found = trucks.find(t => t.plate_number.trim().toUpperCase() === trimmed && t.status === 'active')
-    if (!found) { showToast(`Truck plate "${plateNumber}" not found in active fleet`, 'error'); return }
-    setEditing({ truck_id: found.id, site_id: siteId })
-    setShowForm(true)
-  }
+  // Data
+  const [sites, setSites] = useState([])
+  const [trucks, setTrucks] = useState([])
+  const [materials, setMaterials] = useState([])
+  const [siteId, setSiteId] = useState(() => Number(localStorage.getItem('stp_site_id')) || 0)
+  const [showQr, setShowQr] = useState(false)
+  const [showQrModalFor, setShowQrModalFor] = useState(null)
+  const [scannedTruckId, setScannedTruckId] = useState(null)
 
+  // Persist site selection
+  useEffect(() => { localStorage.setItem('stp_site_id', siteId) }, [siteId])
+
+  // Online/offline detection
+  useEffect(() => {
+    function handleOnline() { setOnline(true); showToast('Back online', 'success') }
+    function handleOffline() { setOnline(false); showToast('You are offline', 'info') }
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    return () => { window.removeEventListener('online', handleOnline); window.removeEventListener('offline', handleOffline) }
+  }, [])
+
+  // Dark mode
   useEffect(() => {
     if (dark) { document.documentElement.classList.add('dark'); localStorage.setItem('stp_dark', '1') }
     else { document.documentElement.classList.remove('dark'); localStorage.setItem('stp_dark', '0') }
   }, [dark])
 
+  // Auto-update check
   useEffect(() => {
     if (!token) return
-    fetch('/api/version').then(r => r.json()).then(data => {
+    fetch(`${STP_API}/api/version`).then(r => r.json()).then(data => {
       if (data.version && data.version !== VERSION) { setUpdateAvailable(true); setUpdateDismissed(false) }
     }).catch(() => {})
   }, [])
 
-  if (!token) return <LoginPage onLogin={setUser} />
+  // Load data
+  function loadSites() { api.sites.list().then(setSites).catch(() => {}) }
+  function loadTrucks() { api.trucks.list().then(setTrucks).catch(() => {}) }
+  function loadMaterials() { api.materials.list().then(setMaterials).catch(() => {}) }
+  function loadAll() { loadSites(); loadTrucks(); loadMaterials() }
 
+  useEffect(() => { if (token && activated) loadAll() }, [])
+
+  // Auto-select first site
   useEffect(() => {
-    const load = async () => {
-      try {
-        const [s, t, m] = await Promise.all([api.sites.list(), api.trucks.list(), api.materials.list()])
-        setSites(s); setTrucks(t); setMaterials(m)
-        if (s.length > 0 && !siteId) {
-          const savedSite = Number(localStorage.getItem('stp_site'))
-          setSiteId(savedSite || s[0].id)
-        }
-      } catch (e) { showToast('Failed to load data', 'error') }
+    if (sites.length > 0 && !siteId) {
+      setSiteId(sites[0].id)
     }
-    load()
-  }, [])
+  }, [sites])
 
-  useEffect(() => {
-    const onOff = () => setIsOffline(!navigator.onLine)
-    window.addEventListener('online', onOff); window.addEventListener('offline', onOff)
-    return () => { window.removeEventListener('online', onOff); window.removeEventListener('offline', onOff) }
-  }, [])
-
-  useEffect(() => { if (siteId) localStorage.setItem('stp_site', siteId) }, [siteId])
+  // Auth check
+  if (!activated && !token) return <ActivationScreen onSuccess={() => window.location.reload()} />
+  if (!user && token) return <LoginPage onLogin={setUser} />
 
   function handleLogout() {
-    localStorage.removeItem('stp_token'); localStorage.removeItem('stp_user'); localStorage.removeItem('stp_site')
+    localStorage.removeItem('stp_token'); localStorage.removeItem('stp_user'); localStorage.removeItem('stp_code')
     window.location.hash = '#login'; window.location.reload()
   }
 
-  function refreshAll() {
-    Promise.all([api.sites.list(), api.trucks.list(), api.materials.list()])
-      .then(([s, t, m]) => { setSites(s); setTrucks(t); setMaterials(m) }).catch(() => {})
+  function handleUpdateNow() {
+    window.location.href = window.location.pathname + '?v=' + Date.now()
   }
 
-  function handleUpdateNow() {
-    const bust = Date.now()
-    window.location.href = window.location.pathname + '?v=' + bust
+  function handleQrScan(result) {
+    const found = trucks.find(t => t.plate_number.toLowerCase() === result.toLowerCase())
+    if (found) {
+      setScannedTruckId(found.id)
+      setTab('log')
+    } else {
+      showToast('Truck not found: ' + result, 'error')
+    }
   }
 
   return (
     <div className="min-h-screen bg-bg max-w-[640px] mx-auto flex flex-col">
-      <style>{`
-        @media print {
-          header, nav, button, a, .no-print { display: none !important; }
-          body { background: white !important; color: black !important; font-size: 13px; }
-          .bg-surface { background: white !important; border: 1px solid #ddd !important; box-shadow: none !important; border-radius: 4px !important; }
-          .bg-bg { background: #f9f9f9 !important; }
-          .border-border, .divide-border > * { border-color: #e0e0e0 !important; }
-          table { font-size: 12px; }
-          th, td { padding: 6px 8px !important; }
-          .divide-y > * { page-break-inside: avoid; }
-          h3 { page-break-before: avoid; }
-          .p-4, .p-6 { padding: 8px !important; }
-          .space-y-3 > * + *, .space-y-4 > * + * { margin-top: 8px !important; }
-          .text-text { color: #111 !important; }
-          .text-muted { color: #555 !important; }
-        }
-      `}</style>
+      <Topbar user={user} onLogout={handleLogout} dark={dark} onToggleDark={() => setDark(d => !d)} online={online} />
 
+      {/* Auto-update banner */}
       {updateAvailable && !updateDismissed && (
-        <div className="bg-primary text-white text-sm px-4 py-2.5 flex items-center justify-between gap-3">
+        <div className="bg-primary/10 border-b border-primary/20 px-4 py-2 flex items-center justify-between gap-2">
+          <span className="text-xs text-primary">A new version is available</span>
           <div className="flex items-center gap-2">
-            <RefreshCw size={15} className="flex-shrink-0" />
-            <span>A new version is available!</span>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <button onClick={handleUpdateNow}
-              className="bg-white text-primary text-xs font-bold px-3 py-1 rounded-lg hover:bg-surface/90 transition-colors">
-              Update Now
-            </button>
-            <button onClick={() => setUpdateDismissed(true)} className="text-white/70 hover:text-white transition-colors">
-              <X size={15} />
-            </button>
+            <button onClick={handleUpdateNow} className="text-xs text-primary font-semibold">Update</button>
+            <button onClick={() => setUpdateDismissed(true)} className="text-xs text-muted">Dismiss</button>
           </div>
         </div>
       )}
 
-      <Topbar sites={sites} siteId={siteId} onSiteChange={setSiteId} user={user} onLogout={handleLogout} isOffline={isOffline} dark={dark} onToggleDark={() => setDark(d => !d)} />
       <main className="flex-1 overflow-y-auto pb-[72px]">
-        {tab === 'dashboard' && <DashboardPage siteId={siteId} showToast={showToast} />}
-        {tab === 'log' && <LogPage siteId={siteId} sites={sites} trucks={trucks} materials={materials} onRefresh={refreshAll} showForm={showForm} setShowForm={setShowForm} editing={editing} setEditing={setEditing} showQr={showQr} setShowQr={setShowQr} />}
-        {tab === 'trucks' && <TrucksPage trucks={trucks} materials={materials} onRefresh={refreshAll} setShowQrModalFor={setShowQrModalFor} />}
-
-        {tab === 'more' && <ErrorBoundary><MorePage siteId={siteId} sites={sites} trucks={trucks} materials={materials}
-          onRefreshSites={() => api.sites.list().then(setSites)}
-          onRefreshTrucks={() => api.trucks.list().then(setTrucks)}
-          onRefreshMaterials={() => api.materials.list().then(setMaterials)}
-          onRefreshAll={refreshAll} user={user} /></ErrorBoundary>}
+        {tab === 'dashboard' && <DashboardPage siteId={siteId} sites={sites} trucks={trucks} onChangeSite={setSiteId} />}
+        {tab === 'log' && <LogPage siteId={siteId} sites={sites} trucks={trucks} materials={materials} onRefresh={loadAll} showQr={showQr} setShowQr={setShowQr} onQrScan={handleQrScan} scannedTruckId={scannedTruckId} onScannedTruckUsed={() => setScannedTruckId(null)} />}
+        {tab === 'trucks' && <TrucksPage trucks={trucks} onRefresh={loadTrucks} setShowQrModalFor={setShowQrModalFor} />}
+        {tab === 'more' && <MorePage siteId={siteId} sites={sites} trucks={trucks} materials={materials} onRefreshSites={loadSites} onRefreshTrucks={loadTrucks} onRefreshMaterials={loadMaterials} onRefreshAll={loadAll} user={user} />}
       </main>
-      <BottomNav tab={tab} onChange={setTab} user={user} />
+      <BottomNav tab={tab} onChange={setTab} />
       <Toast toasts={toasts} />
+
+      {/* QR Scanner */}
       <Suspense fallback={null}>
-        <QrScanner open={showQr} onClose={() => setShowQr(false)} onScan={handleQrScan} />
-        {tab === 'trucks' && showQrModalFor && <TruckQrModal truck={showQrModalFor} onClose={() => setShowQrModalFor(null)} />}
+        {showQr && <QrScanner open={showQr} onClose={() => setShowQr(false)} onScan={handleQrScan} />}
+      </Suspense>
+
+      {/* Truck QR Modal */}
+      <Suspense fallback={null}>
+        {showQrModalFor && <TruckQrModal open={!!showQrModalFor} onClose={() => setShowQrModalFor(null)} truck={showQrModalFor} />}
       </Suspense>
     </div>
   )
