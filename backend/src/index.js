@@ -15,11 +15,12 @@ app.use(express.json());
 
 const APP_VERSION = '1.0.0';
 
+// API routes
 app.use('/api/codes', require('./routes/codes'));
 app.use('/api/offline', require('./routes/offline'));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/auth', require('./routes/device-login'));
-app.use('/api/auth', require('./routes/reset-with-code'))
+app.use('/api/auth', require('./routes/reset-with-code'));
 app.use('/api/sites', require('./routes/sites'));
 app.use('/api/trucks', require('./routes/trucks'));
 app.use('/api/materials', require('./routes/materials'));
@@ -34,15 +35,15 @@ app.get('/api/version', (req, res) => {
   res.json({ version: APP_VERSION });
 });
 
-// Serve license generator page (BEFORE static middleware)
+// IMPORTANT: Generator page BEFORE static middleware
 app.get('/license-generator', (req, res) => {
-  res.sendFile(path.join(__dirname, '../../public/generator.html''));
+  res.sendFile(path.join(__dirname, '../../public/generator.html'));
 });
 
-// Serve built frontend in production
+// Static files (customer app)
 app.use(express.static(path.join(__dirname, '../../frontend/dist')));
 
-// Catch-all: serve index.html for SPA routes
+// Catch-all for SPA
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../../frontend/dist/index.html'));
 });
