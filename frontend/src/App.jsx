@@ -10,7 +10,6 @@ import { api, STP_API } from './lib/api-customer'
 import { VERSION } from './version'
 const QrScanner = lazy(() => import('./components/QrScanner'))
 const TruckQrModal = lazy(() => import('./components/TruckQrModal'))
-const QRCodeGenerator = lazy(() => import('./components/QRCodeGenerator'))
 
 // ─── Export helpers ─────────────────────────────────────────────────────────
 function downloadUrl(url, filename) {
@@ -1346,19 +1345,6 @@ function MorePage({ siteId, sites, trucks, materials, onRefreshSites, onRefreshT
               <button onClick={() => deleteMat(m.id)} className="text-muted hover:text-danger">×</button>
             </span>
           ))}
-        </div>
-      </div>
-
-      {/* Offline Activation QR */}
-      <div className="bg-surface rounded-xl border border-border overflow-hidden">
-        <div className="px-4 py-3 border-b border-border">
-          <h3 className="text-sm font-semibold text-text">Offline Activation</h3>
-        </div>
-        <div className="p-4">
-          <p className="text-xs text-muted mb-3">Generate QR codes for offline customer app activation</p>
-          <Suspense fallback={<div className="text-xs text-muted">Loading...</div>}>
-            <QRCodeGenerator apiUrl={STP_API} />
-          </Suspense>
         </div>
       </div>
 

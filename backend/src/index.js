@@ -37,6 +37,11 @@ app.get('/api/version', (req, res) => {
 const path = require('path');
 app.use(express.static(path.join(__dirname, '../../frontend/dist')));
 
+// Serve license generator page
+app.get('/generator', (req, res) => {
+  res.sendFile(path.join(__dirname, '../../public/generator.html'));
+});
+
 // Catch-all: serve index.html for SPA routes
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../../frontend/dist/index.html'));
