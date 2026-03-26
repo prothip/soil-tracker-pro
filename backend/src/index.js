@@ -35,8 +35,8 @@ app.get('/api/version', (req, res) => {
 });
 
 // Serve license generator page (BEFORE static middleware)
-app.get('/generator', (req, res) => {
-  res.sendFile(path.join(__dirname, '../../public/generator.html'));
+app.get('/license-generator', (req, res) => {
+  res.sendFile(path.join(__dirname, '../../public/generator.html''));
 });
 
 // Serve built frontend in production
