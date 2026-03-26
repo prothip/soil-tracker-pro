@@ -1,5 +1,5 @@
 // Customer app: uses device tokens via activation code
-const STP_API = 'https://cope-calls-fotos-springer.trycloudflare.com'
+const STP_API = 'https://soil-tracker-pro.onrender.com'
 
 export { STP_API }
 
