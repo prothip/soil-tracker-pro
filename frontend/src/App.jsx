@@ -45,7 +45,7 @@ function ActivationScreen({ onSuccess }) {
 
   async function handle(e) {
     e.preventDefault()
-    if (code.replace(/-/g, '').length < 16) { setErr('Please enter a complete activation code'); return }
+    if (code.replace(/-/g, '').length < 4) { setErr('Please enter a complete activation code'); return }
     setErr(''); setLoading(true)
     try {
       const res = await fetch(`${STP_API}/api/auth/device-login`, {
@@ -136,7 +136,7 @@ function LoginPage({ onLogin }) {
   async function handleForgotSubmit() {
     if (forgotStep === 1) {
       // Verify activation code
-      if (!forgotCode || forgotCode.replace(/-/g,'').length < 16) {
+      if (!forgotCode || forgotCode.replace(/-/g, "").length < 4) {
         setForgotMsg('Enter a valid activation code')
         return
       }
