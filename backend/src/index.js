@@ -15,6 +15,7 @@ app.use(express.json());
 const APP_VERSION = '1.0.0';
 
 app.use('/api/codes', require('./routes/codes'));
+app.use('/api/offline', require('./routes/offline'));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/auth', require('./routes/device-login'));
 app.use('/api/auth', require('./routes/reset-with-code'))

@@ -71,6 +71,15 @@ db.exec(`
     status TEXT DEFAULT 'active',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS offline_activations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT UNIQUE NOT NULL,
+    expires_at TEXT,
+    status TEXT DEFAULT 'active',
+    used_at TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Seed data — admin user only, no preset sites/trucks/materials
