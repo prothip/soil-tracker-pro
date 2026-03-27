@@ -3,8 +3,7 @@
   "version": "1.0.0",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
-    "postinstall": "cd ../frontend && npm install && npm run build"
+    "dev": "node --watch src/index.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
