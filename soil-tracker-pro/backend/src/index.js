@@ -19,14 +19,11 @@ const APP_VERSION = '1.0.0';
 app.use('/api/codes', require('./routes/codes'));
 app.use('/api/offline', require('./routes/offline'));
 
-
-# License generator route
-
+// License generator route
 app.get('/license-generator', (req, res) => {
-
   res.sendFile(path.join(__dirname, '../public/generator.html'));
-
 });
+
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/auth', require('./routes/device-login'));
 app.use('/api/auth', require('./routes/reset-with-code'));
